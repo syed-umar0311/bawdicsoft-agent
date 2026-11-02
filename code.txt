@@ -1,0 +1,951 @@
+
+import torch, transformers, datasets, accelerate
+
+print("=" * 60)
+print(f"torch: {torch.__version__}")
+print(f"transformers: {transformers.__version__}")
+print(f"datasets: {datasets.__version__}")
+print(f"accelerate: {accelerate.__version__}")
+print(f"CUDA available: {torch.cuda.is_available()}")
+if torch.cuda.is_available():
+    print(f"GPUs: {torch.cuda.device_count()}")
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+print("=" * 60)
+
+
+
+
+
+
+
+%%writefile generate_dataset.py
+"""
+BawdicSoft AI Sales Agent — Dataset v5
+FULL WEBSITE KNOWLEDGE × 3 USER TYPES × MULTI-TURN EMAIL PATTERNS
+"""
+import json
+import random
+import os
+from collections import Counter
+
+random.seed(42)
+
+BRAND = {
+    "name": "BawdicSoft", "founded": "2018",
+    "ceo": "Syed Bilal Hashmi", "director": "Muhammad Zubair",
+    "hq": "Farzana Building, Karachi, Pakistan",
+    "email": "info@bawdicsoft.com", "phone": "+92 317 8866631",
+    "motto": "Innovate. Transform. Succeed.",
+}
+
+STATS = {
+    "projects": "250+ projects delivered",
+    "countries": "15+ countries served",
+    "satisfaction": "99% client satisfaction",
+    "experience": "10+ years average team experience",
+    "iso": "ISO 27001 certified",
+    "sla": "2-hour response SLA",
+    "cost_savings": "60% lower development costs than in-house",
+    "speed": "40% faster time-to-market",
+    "uptime": "99.9% uptime guarantee",
+    "support": "24/7 support coverage",
+}
+
+AI_SERVICES = {
+    "chatbots": {"name": "AI Chatbots", "for": "customer support, lead capture, internal tools",
+        "stack": "Python, LLMs, Hugging Face, OpenAI APIs",
+        "desc": "conversational AI systems that handle customer interactions, qualify leads, or assist internal teams"},
+    "ml_models": {"name": "Machine Learning Models", "for": "prediction, classification, ranking",
+        "stack": "Python, TensorFlow, PyTorch, scikit-learn",
+        "desc": "custom ML models built for your specific data and problem"},
+    "nlp": {"name": "NLP Systems", "for": "text classification, sentiment analysis, summarization, entity extraction",
+        "stack": "Python, spaCy, Hugging Face Transformers",
+        "desc": "natural language processing systems that extract meaning from text"},
+    "computer_vision": {"name": "Computer Vision", "for": "image recognition, object detection, video analysis",
+        "stack": "Python, OpenCV, YOLO, TensorFlow",
+        "desc": "vision systems that identify and analyze visual content"},
+    "recommendation": {"name": "Recommendation Engines", "for": "e-commerce, content, media, marketplaces",
+        "stack": "Python, TensorFlow, collaborative filtering",
+        "desc": "personalization systems that suggest the right content or products"},
+    "voice_ai": {"name": "AI Voice Assistants", "for": "customer service, internal tools, consumer apps",
+        "stack": "Python, Whisper, TTS models",
+        "desc": "voice-driven AI systems for hands-free interactions"},
+    "ai_detection": {"name": "AI Content Detection", "for": "content moderation, academic integrity, media verification",
+        "stack": "Python, TensorFlow, Next.js",
+        "desc": "detects whether text, images, or video are AI-generated (see Deep-Trace)"},
+    "automation": {"name": "AI Automation", "for": "workflow automation, data processing, reporting",
+        "stack": "Python, LangChain, RPA tools",
+        "desc": "AI systems that automate repetitive business processes"},
+}
+
+BLOCKCHAIN_SERVICES = {
+    "smart_contracts": {"name": "Smart Contracts", "for": "DeFi, NFTs, tokenomics, governance",
+        "stack": "Solidity, Hardhat, OpenZeppelin",
+        "desc": "audited smart contracts deployed to Ethereum, Polygon, BSC"},
+    "defi": {"name": "DeFi Protocols", "for": "lending, staking, swapping, yield",
+        "stack": "Solidity, Web3.js, Ethers.js",
+        "desc": "decentralized finance protocols that run without intermediaries"},
+    "nft": {"name": "NFT Marketplaces", "for": "art, gaming, utility, membership",
+        "stack": "Solidity, IPFS, Next.js",
+        "desc": "NFT platforms with minting, trading, royalties, and wallet integration"},
+    "dex": {"name": "Decentralized Exchanges", "for": "token swaps, liquidity, AMMs",
+        "stack": "Solidity, Uniswap V3, custom AMMs",
+        "desc": "peer-to-peer exchanges without central authority"},
+    "dao": {"name": "DAO Governance", "for": "community governance, treasury management",
+        "stack": "Solidity, Snapshot, Tally",
+        "desc": "decentralized autonomous organizations with proposal/voting systems"},
+    "token_launch": {"name": "Token Launches", "for": "ERC-20, BEP-20, custom tokenomics",
+        "stack": "Solidity, Hardhat, audit",
+        "desc": "end-to-end token launches from contract to audit to listing"},
+    "wallets": {"name": "Crypto Wallets", "for": "custodial, non-custodial, multi-sig",
+        "stack": "Solidity, Web3.js, React Native",
+        "desc": "secure crypto wallets for storing and transacting digital assets"},
+    "web3_dapps": {"name": "Web3 dApps", "for": "gaming, social, DeFi, NFT",
+        "stack": "Solidity, Next.js, Web3.js",
+        "desc": "blockchain-integrated applications with wallet connections"},
+}
+
+WEB_SERVICES = {
+    "crm": {"name": "Custom CRMs", "for": "sales, support, operations",
+        "stack": "React, Node.js, PostgreSQL",
+        "desc": "tailored CRMs for your specific sales or support workflow"},
+    "ecommerce": {"name": "E-Commerce Platforms", "for": "B2B, B2C, marketplaces",
+        "stack": "Next.js, Stripe, PostgreSQL",
+        "desc": "online stores with payment integration and inventory management"},
+    "saas": {"name": "SaaS Dashboards", "for": "analytics, monitoring, operations",
+        "stack": "React, Next.js, Node.js, AWS",
+        "desc": "software-as-a-service dashboards with subscription billing"},
+    "marketplace": {"name": "Marketplace Platforms", "for": "goods, services, digital products",
+        "stack": "Next.js, PostgreSQL, Stripe Connect",
+        "desc": "multi-vendor marketplaces with seller onboarding and payments"},
+    "booking": {"name": "Booking Systems", "for": "healthcare, hospitality, salons, events",
+        "stack": "Next.js, Node.js, Twilio",
+        "desc": "scheduling and booking systems with notifications"},
+    "lms": {"name": "Learning Management Systems", "for": "corporate training, schools, online courses",
+        "stack": "Next.js, PostgreSQL, video APIs",
+        "desc": "LMS platforms with courses, progress tracking, and certificates"},
+    "enterprise": {"name": "Enterprise Dashboards", "for": "sales ops, executive reporting, KPIs",
+        "stack": "React, Next.js, Snowflake",
+        "desc": "data dashboards for enterprise decision-making"},
+    "web3_web": {"name": "Web3-Integrated Web Apps", "for": "traditional apps with blockchain features",
+        "stack": "Next.js, Web3.js, Solidity",
+        "desc": "web apps that connect to wallets and blockchain networks"},
+}
+
+PRODUCTS = {
+    "deep-trace": {"name": "Deep-Trace", "category": "AI",
+        "one_line": "AI detection tool that verifies whether text, images, and video are AI-generated",
+        "tech": "Python, TensorFlow, Next.js, data visualization"},
+    "cybercity": {"name": "CyberCity", "category": "AI",
+        "one_line": "Security audit agent that monitors websites for cyber threats in real time",
+        "tech": "React, Node.js, Docker"},
+    "hashfor": {"name": "Hashfor", "category": "Web",
+        "one_line": "SEO and AEO platform built to lift brand visibility in search and AI answer engines",
+        "tech": "Next.js, Tailwind CSS, analytics"},
+}
+
+PORTFOLIO = [
+    {"name": "AGUA COIN", "category": "Blockchain", "industry": "Digital currency / FinTech",
+     "one_line": "Decentralized currency ecosystem with asset-backed stablecoins tied to physical precious metals",
+     "tech": "Next.js, Web3.js, Solidity, Tailwind CSS"},
+    {"name": "SIGMANTARIAN", "category": "Blockchain", "industry": "Crypto rewards / Affiliate",
+     "one_line": "Blockchain affiliate platform with transparent crypto rewards and DeFi integration",
+     "tech": "React, Node.js, Blockchain, Figma"},
+    {"name": "Deep-Trace", "category": "AI", "industry": "Content verification",
+     "one_line": "AI detection for text, images, and video that verifies whether content is AI-generated",
+     "tech": "Python, TensorFlow, Next.js"},
+    {"name": "CyberCity", "category": "AI", "industry": "Cybersecurity",
+     "one_line": "Security audit agent that monitors websites for cyber threats in real time",
+     "tech": "React, Node.js, Docker"},
+    {"name": "Hashfor", "category": "Web", "industry": "Digital marketing",
+     "one_line": "SEO and AEO platform built to lift brand visibility in search and AI answer engines",
+     "tech": "Next.js, Tailwind CSS, analytics"},
+    {"name": "AL-MADINA ONLINE", "category": "Web", "industry": "Education",
+     "one_line": "Cambridge International school site covering seven IGCSE subjects with full LMS integration",
+     "tech": "WordPress, custom theme, LMS integration"},
+    {"name": "FGRF FOUNDATION", "category": "Web", "industry": "Non-profit",
+     "one_line": "Foundation site built around trust and a frictionless donation flow",
+     "tech": "Next.js, Framer Motion, Stripe API"},
+]
+
+PROCESS_STEPS = [
+    "Discovery & Strategy (1-2 weeks): understand goals, audit current state, define scope",
+    "Pilot Project (30-60 days): build a real slice of work — you judge us on delivery, not a pitch",
+    "Dedicated Team Ramp-up (2-4 weeks): scale the team to match your pace",
+    "Continuous Delivery (ongoing): ship features, iterate, and support",
+]
+
+ENGAGEMENT_MODELS = [
+    "Fixed-Price: defined scope, fixed budget. Good for well-specified MVPs.",
+    "Time & Materials: flexible scope, hourly billing. Good for evolving products.",
+    "Dedicated Team: dedicated engineers. Best for long-term partnerships.",
+]
+
+PAGE_OPENERS = {
+    "/": ["Hey! Building something with AI or blockchain? That's our space. What are you working on?",
+          "Welcome! We build AI-powered systems and blockchain platforms that scale. What brings you here?",
+          "Hi! Tell me what you're building and I'll point you to the right team.",
+          "Hey there! Curious about what we do, or already have a project in mind?"],
+    "/services": ["Looking for a dev team or exploring a specific solution? What's your focus?",
+                  "We cover AI, blockchain/Web3, and web development. Which one interests you?",
+                  "Need help with strategy, design, or full development? What are you working on?",
+                  "Which service caught your eye — AI, blockchain, or web?"],
+    "/portfolio": ["See something that fits? Happy to walk you through any of these. What caught your eye?",
+                   "These are some of our best projects. Building something similar?",
+                   "Which project interests you most? I can share more details.",
+                   "Want me to walk you through one of these? Which one?"],
+    "/casestudies": ["These case studies show our enterprise work. Building something similar?",
+                     "We've worked with SaaS, FinTech, Web3, and operations teams. What's your situation?",
+                     "Any case study you want to dig into? Or share your situation?"],
+    "/about-us": ["Curious about the team? What brings you here today?",
+                  "We're a Karachi-based team working with clients in 15+ countries. What can I help with?",
+                  "Want to know about our story, or just exploring what we do?"],
+    "/contact-us": ["Before you fill the form — want me to help figure out the right starting point?",
+                    "Looking to get in touch? I can route you to the right person. What's your project about?",
+                    "Skip the form — tell me what you're building and I'll get you to the right person."],
+    "/careers": ["Interested in joining BawdicSoft? What role are you looking for?",
+                 "Looking to apply? We hire in MERN, full-stack, AI, blockchain, UI/UX, and WordPress. Which one interests you?",
+                 "Which role brought you here? Happy to help route your application."],
+    "/blogs": ["Reading our blog? Anything specific you want to dig into?",
+               "Looking for insights on AI or blockchain? I can point you to the right article.",
+               "What topic brought you to the blog?"],
+    "/deep-trace": ["Checking out Deep-Trace? It detects AI-generated text, images, and video. Need it for your platform?",
+                    "Deep-Trace is our AI detection product. Want to integrate it or build something similar?",
+                    "Deep-Trace — our AI content detector. Building something similar or need to integrate it?"],
+    "/cybercity": ["CyberCity runs real-time security audits. Want to scan your site?",
+                   "CyberCity is our security audit agent. Building something in cybersecurity?",
+                   "CyberCity — our security tool. Need a scan or building something similar?"],
+    "/hashfor": ["Looking at Hashfor? It's our SEO and AEO platform. Need SEO help or building something similar?",
+                 "Hashfor lifts brand visibility in search and AI engines. What's your SEO challenge?",
+                 "Hashfor — our SEO platform. Want a visibility report or building something similar?"],
+}
+
+
+def build_website_qa():
+    qa = []
+    qa.append((["what is bawdicsoft", "tell me about bawdicsoft", "who is bawdicsoft", "about bawdicsoft", "what is your company"],
+        f"BawdicSoft is an enterprise software agency founded in {BRAND['founded']}, based in {BRAND['hq']}. We build AI systems, blockchain platforms, and web applications for {STATS['countries']}."))
+    qa.append((["what does bawdicsoft do", "what do you do", "what's your business", "what do you guys do"],
+        "We build AI systems, blockchain platforms, and web applications. Our three pillars are AI Solutions, Blockchain/Web3, and Web Application Development. Which one interests you?"))
+    qa.append((["where are you located", "where is your office", "what's your address", "where are you based"],
+        f"Our head office is in {BRAND['hq']}. We serve clients in {STATS['countries']} with a {STATS['sla']}."))
+    qa.append((["who is the ceo", "who runs bawdicsoft", "who is the founder", "who is in charge"],
+        f"{BRAND['ceo']} is CEO and {BRAND['director']} is Director. Founded in {BRAND['founded']}."))
+    qa.append((["how many projects have you done", "how many clients do you have", "how many projects"],
+        f"{STATS['projects']}, with {STATS['satisfaction']}."))
+    qa.append((["how big is your team", "how many employees", "how many people work there"],
+        f"Our team has {STATS['experience']}. Every project is led by senior engineers, not juniors."))
+    qa.append((["what is your motto", "what's your tagline", "what is your slogan"],
+        f"Our motto is: {BRAND['motto']}."))
+    for key, s in AI_SERVICES.items():
+        qa.append(([f"do you do {s['name'].lower()}", f"can you build {s['name'].lower()}",
+            f"tell me about {s['name'].lower()}", f"what is your {s['name'].lower()} service"],
+            f"Yes — we build {s['name']} for {s['for']}. Our stack: {s['stack']}. {s['desc'].capitalize()}. What's your use case?"))
+    for key, s in BLOCKCHAIN_SERVICES.items():
+        qa.append(([f"do you do {s['name'].lower()}", f"can you build {s['name'].lower()}",
+            f"tell me about {s['name'].lower()}"],
+            f"Yes — we build {s['name']} for {s['for']}. Stack: {s['stack']}. {s['desc'].capitalize()}. What are you building?"))
+    for key, s in WEB_SERVICES.items():
+        qa.append(([f"do you do {s['name'].lower()}", f"can you build {s['name'].lower()}",
+            f"tell me about {s['name'].lower()}"],
+            f"Yes — we build {s['name']} for {s['for']}. Stack: {s['stack']}. {s['desc'].capitalize()}. What's your project?"))
+    for key, p in PRODUCTS.items():
+        qa.append(([f"what is {p['name'].lower()}", f"tell me about {p['name'].lower()}", f"what does {p['name'].lower()} do"],
+            f"{p['name']} is our {p['category']} product — {p['one_line']}. Tech: {p['tech']}. Need it, or building something similar?"))
+    for proj in PORTFOLIO:
+        qa.append(([f"tell me about {proj['name'].lower()}", f"what is {proj['name'].lower()}", f"did you build {proj['name'].lower()}"],
+            f"{proj['name']} — {proj['one_line']}. Built on {proj['tech']}. Something similar you have in mind?"))
+    qa.append((["what have you built", "show me your portfolio", "what projects have you done", "give me examples of your work"],
+        "Our portfolio includes AGUA COIN (blockchain), Deep-Trace (AI detection), CyberCity (security), Hashfor (SEO), AL-MADINA ONLINE (education), and FGRF Foundation (non-profit). Which one sounds similar to what you're building?"))
+    qa.append((["do you have case studies", "can i see case studies", "do you have references"],
+        "Yes — four on the site: SaaS scaling (2x release velocity), FinTech modernization, AI automation, and Web3 infrastructure. What's your industry?"))
+    qa.append((["what is your process", "how do you work", "how do you start a project", "what's your approach"],
+        "Four phases: " + ", ".join(PROCESS_STEPS[:3]) + ". The pilot is the key — you judge us on delivered work, not a pitch. What are you building?"))
+    qa.append((["what's your pilot", "how does the pilot work", "what is the pilot project"],
+        "The pilot is a 30-60 day engagement where we build a real slice of your project. You see delivered work before committing to a full contract. What's the scope?"))
+    qa.append((["what engagement models do you offer", "how do you charge", "what pricing models do you offer"],
+        "Three models: " + " | ".join(ENGAGEMENT_MODELS) + " Which fits your project?"))
+    qa.append((["how long does a project take", "what's your timeline", "how long will it take", "what's the delivery time"],
+        "MVP typically 4-8 weeks. Full platforms 3-6 months. We start with a 30-60 day pilot so you see progress before committing further. What's your deadline?"))
+    qa.append((["how much does it cost", "what's your pricing", "what's your budget range", "how much do you charge"],
+        f"Pricing is scope-based. Clients typically see {STATS['cost_savings']}. Ranges from $5k for a pilot to $50k+ for full platforms. What are you building?"))
+    qa.append((["do you have fixed pricing", "can you give a fixed quote", "do you charge hourly"],
+        "For well-defined scopes, yes — fixed-price. For evolving products, time-and-materials or dedicated teams work better. Which fits your situation?"))
+    qa.append((["are you secure", "how do i know my data is safe", "how do you handle security"],
+        f"We're {STATS['iso']}, use AES-256 at rest, TLS 1.3 in transit, RBAC, and regular audits. NDAs are signed by every team member. Any specific compliance requirement?"))
+    qa.append((["are you gdpr compliant", "do you follow gdpr", "are you hipaa compliant", "do you follow soc2"],
+        "Yes — we follow GDPR, SOC 2, HIPAA, and CCPA standards where applicable. Want us to send the compliance documentation?"))
+    qa.append((["do you sign ndas", "will you sign an nda", "can you sign a contract"],
+        "Yes — NDAs are standard. Every team member assigned to your project signs one. Contracts are governed by your jurisdiction."))
+    qa.append((["do i own the code", "who owns the ip", "do i keep the source code"],
+        "You own 100% of the code and IP we produce. We hand over the repository on project completion."))
+    qa.append((["why should i choose you", "what makes you different", "why you over others"],
+        f"Senior-first staffing — every project is led by engineers with {STATS['experience']}. Plus we're {STATS['iso']}, and you start with a pilot. What's your deciding factor?"))
+    qa.append((["do you work with startups", "i'm a startup", "we're a small company"],
+        "Yes — we work with startups and enterprises. The pilot model works especially well for startups. What stage are you at?"))
+    qa.append((["we've been burned before", "we had a bad experience with a dev shop", "previous agency failed us"],
+        "Heard that often enough that we built the pilot for exactly this. You see delivered work in 30-60 days before committing further. What went wrong last time?"))
+    qa.append((["we already have a team", "we have in-house devs", "we have our own developers"],
+        "No problem — happy to be a backup for overflow work or specific expertise. What are you working on?"))
+    qa.append((["are you hiring", "do you have job openings", "any open positions"],
+        "Yes — we hire in MERN, full-stack, AI, blockchain, UI/UX, and WordPress. Which role interests you?"))
+    qa.append((["how do i apply", "i want to apply for a job", "how do i send my resume"],
+        "Great — the careers page lists all open roles. Which position are you looking at?"))
+    qa.append((["how can i contact you", "how do i reach you", "how do i get in touch"],
+        f"Easy — drop your email and BawdicSoft Team will reach out within 2 hours. Or reach us directly at {BRAND['email']}."))
+    qa.append((["what's your email", "give me your email", "what is your email address"],
+        f"Our general email is {BRAND['email']}. WhatsApp: {BRAND['phone']}."))
+    qa.append((["what's your phone number", "give me your phone", "how do i call you"],
+        f"WhatsApp: {BRAND['phone']}. Or drop your email and BawdicSoft Team will call you."))
+    qa.append((["can i book a call", "i want to schedule a call", "can we do a meeting"],
+        f"Yes — drop your email and BawdicSoft Team will set up a 30-minute call with {BRAND['ceo']}. Roughly what are we discussing?"))
+    qa.append((["what's the weather", "what's the weather like", "weather today"],
+        "Ha — not my strong suit. I'm here for BawdicSoft stuff. What can I help you build?"))
+    qa.append((["tell me a joke", "say something funny", "make me laugh"],
+        "Not my department, I'm afraid. But I can tell you about our AI, blockchain, and web work. What brings you here?"))
+    qa.append((["write me a poem", "can you write poetry", "tell me a story"],
+        "Not my department. I can help with anything BawdicSoft-related though. What are you looking for?"))
+    qa.append((["are you ai", "are you a bot", "are you human", "am i talking to a robot"],
+        "I'm BawdicSoft's AI assistant on their site. For anything that needs a human, the BawdicSoft Team is one step away."))
+    qa.append((["you're too expensive", "you are very costly", "your price is high", "can you do it cheaper"],
+        f"Fair concern. Clients see {STATS['cost_savings']}, and you start with a 30-60 day pilot rather than a large upfront commitment. What's your budget range?"))
+    qa.append((["how do i know you'll deliver", "what if you don't deliver", "how can i trust you"],
+        "The pilot exists for exactly this — you see delivered work in 30-60 days before committing further. What's the project?"))
+    return qa
+
+
+WEBSITE_QA = build_website_qa()
+
+NAMES = ["Ahmed", "Ayesha", "Ali", "Sara", "Hamza", "Fatima", "Zara", "Omar",
+         "Mariam", "Hassan", "Noor", "Hira", "Usman", "Areeba",
+         "Daniel", "Priya", "Marcus", "Elena", "Rachel", "Tom", "John",
+         "Bilal", "Kashif", "Nida", "Faisal"]
+
+DOMAINS = ["gmail.com", "company.com", "outlook.com", "startup.io",
+           "acme.io", "northwind.co", "tech.co"]
+
+INTERESTS = ["AI chatbot", "blockchain wallet", "custom CRM", "SEO platform",
+             "AI detection tool", "mobile app with AI", "NFT marketplace",
+             "e-commerce platform", "DeFi protocol", "enterprise dashboard",
+             "Web3 dApp", "recommendation engine", "token launch"]
+
+GREETINGS = ["hi", "hello", "hey", "salam", "assalamualaikum", "aoa",
+             "hiya", "yo", "hey there", "good morning", "good evening"]
+
+THANKS = ["thanks", "thank you", "shukriya", "thx", "ty", "appreciate it"]
+
+EMAIL_ASKS = [
+    "Want BawdicSoft Team to send a detailed proposal? Just drop your email.",
+    "Drop your email and BawdicSoft Team will reach out with details.",
+    "Should I have BawdicSoft Team follow up? Just leave your email.",
+    "If you'd like a proposal, share your email and BawdicSoft Team will send one.",
+]
+
+NAME_ASKS = ["And your name?", "Who should I tell them this is for?",
+             "What's your name?", "And what should they call you?"]
+
+USER_EMAIL_DECLINES = ["nope", "no thanks", "not now", "maybe later",
+                       "i'll pass", "not interested in sharing"]
+
+
+def email_for(name):
+    return f"{name.lower()}@{random.choice(DOMAINS)}"
+
+
+def convo_unknown(page, q, a):
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": q}, {"role": "agent", "text": a}]
+
+
+def convo_familiar(page, q, a):
+    ack = random.choice(["Welcome back! ", "Hey again — good to see you back. ", "You've been back a few times now. "])
+    return [{"role": "agent", "text": ack + random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": q}, {"role": "agent", "text": a}]
+
+
+def convo_known(page, name, interest, q, a):
+    ack = random.choice([f"Welcome back {name}! ", f"Hey {name}, good to see you again. ", f"{name}! "])
+    ref = random.choice([f"Still working on {interest}?", f"Back for more on {interest}?", f"How's the {interest} project going?"])
+    return [{"role": "agent", "text": ack + ref},
+            {"role": "visitor", "text": random.choice(["Yeah, got a question.", "Yes, still at it.", "Just checking something.", "Got a follow-up."])},
+            {"role": "agent", "text": "Sure — what's your question?"},
+            {"role": "visitor", "text": q}, {"role": "agent", "text": a}]
+
+
+def convo_known_direct(page, name, interest, q, a):
+    return [{"role": "visitor", "text": q}, {"role": "agent", "text": f"Hey {name}! " + a}]
+
+
+def convo_greeting_unknown(page):
+    return [{"role": "visitor", "text": random.choice(GREETINGS)},
+            {"role": "agent", "text": random.choice(PAGE_OPENERS[page])}]
+
+
+def convo_greeting_familiar(page):
+    return [{"role": "visitor", "text": random.choice(GREETINGS)},
+            {"role": "agent", "text": random.choice([
+                "Welcome back! Still exploring, or can I help with something specific?",
+                "Hey again — good to see you back. Anything I can help pin down?",
+                "You've been back a few times — what's the thing you're weighing up?",
+                "Back for another look? What can I help with?"])}]
+
+
+def convo_greeting_known(name, interest):
+    return [{"role": "visitor", "text": random.choice(GREETINGS)},
+            {"role": "agent", "text": random.choice([
+                f"Welcome back {name}! Still working on {interest}?",
+                f"Hey {name}, good to see you again — how's the {interest} going?",
+                f"{name}! Back for more on {interest}?",
+                f"Welcome back {name}. Last time we talked about {interest} — still on that?"])}]
+
+
+def convo_flow_with_email_ask(page, q, a, name):
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": q}, {"role": "agent", "text": a},
+            {"role": "visitor", "text": random.choice(["That's helpful.", "Interesting.", "Makes sense.", "Good to know."])},
+            {"role": "agent", "text": random.choice(EMAIL_ASKS)},
+            {"role": "visitor", "text": email_for(name)},
+            {"role": "agent", "text": random.choice(NAME_ASKS)},
+            {"role": "visitor", "text": name},
+            {"role": "agent", "text": f"Thanks {name}. BawdicSoft Team will be in touch within 2 hours."}]
+
+
+def convo_user_declines_email(page):
+    return [{"role": "agent", "text": random.choice(EMAIL_ASKS)},
+            {"role": "visitor", "text": random.choice(USER_EMAIL_DECLINES)},
+            {"role": "agent", "text": random.choice([
+                "No problem — happy to keep helping here on chat. Anything else you'd like to know?",
+                "All good, no pressure. What else can I help with?",
+                "Sure, no worries. Anything else on your mind?"])}]
+
+
+def convo_email_ask_ignored_1(page, proj, q, a):
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": f"I need {proj}"},
+            {"role": "agent", "text": "Got it. What's your timeline for this?"},
+            {"role": "visitor", "text": "Q3 this year"},
+            {"role": "agent", "text": random.choice(EMAIL_ASKS)},
+            {"role": "visitor", "text": q}, {"role": "agent", "text": a},
+            {"role": "agent", "text": random.choice([
+                "By the way — still happy to send that proposal if you drop your email.",
+                "Whenever you're ready, share your email and BawdicSoft Team will send a detailed proposal.",
+                "If you want a written proposal, just leave your email."])}]
+
+
+def convo_email_ask_ignored_2(page, proj, q1, a1, q2, a2):
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": f"I need {proj}"},
+            {"role": "agent", "text": "Got it. What's your timeline?"},
+            {"role": "visitor", "text": "Q3"},
+            {"role": "agent", "text": random.choice(EMAIL_ASKS)},
+            {"role": "visitor", "text": q1}, {"role": "agent", "text": a1},
+            {"role": "visitor", "text": q2}, {"role": "agent", "text": a2},
+            {"role": "agent", "text": random.choice([
+                "Still happy to send that proposal — just leave your email whenever you're ready.",
+                "If you'd like the written version, share your email and BawdicSoft Team will send it.",
+                "Just drop your email when you want the full proposal."])}]
+
+
+def convo_email_ask_ignored_3(page, proj, qa_list):
+    turns = [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+             {"role": "visitor", "text": f"I need {proj}"},
+             {"role": "agent", "text": "Got it. What's your timeline?"},
+             {"role": "visitor", "text": "Next quarter"},
+             {"role": "agent", "text": random.choice(EMAIL_ASKS)}]
+    for q, a in qa_list:
+        turns.append({"role": "visitor", "text": q})
+        turns.append({"role": "agent", "text": a})
+    turns.append({"role": "agent", "text": random.choice([
+        "Whenever you want the full proposal, just share your email and BawdicSoft Team will send it.",
+        "If you'd like that in writing, drop your email whenever.",
+        "Just leave your email if you want the detailed version."])})
+    return turns
+
+
+def convo_email_ask_ignored_then_gives(page, proj, q1, a1):
+    name = random.choice(NAMES)
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": f"I need {proj}"},
+            {"role": "agent", "text": "Got it. What's your timeline?"},
+            {"role": "visitor", "text": "Q3"},
+            {"role": "agent", "text": random.choice(EMAIL_ASKS)},
+            {"role": "visitor", "text": q1}, {"role": "agent", "text": a1},
+            {"role": "visitor", "text": email_for(name)},
+            {"role": "agent", "text": random.choice(NAME_ASKS)},
+            {"role": "visitor", "text": name},
+            {"role": "agent", "text": f"Thanks {name}. BawdicSoft Team will be in touch within 2 hours."}]
+
+
+def convo_email_ask_ignored_2_then_gives(page, proj, q1, a1, q2, a2):
+    name = random.choice(NAMES)
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": f"I need {proj}"},
+            {"role": "agent", "text": "Got it. What's your timeline?"},
+            {"role": "visitor", "text": "Q3"},
+            {"role": "agent", "text": random.choice(EMAIL_ASKS)},
+            {"role": "visitor", "text": q1}, {"role": "agent", "text": a1},
+            {"role": "agent", "text": "Still happy to send a proposal — just leave your email."},
+            {"role": "visitor", "text": q2}, {"role": "agent", "text": a2},
+            {"role": "visitor", "text": email_for(name)},
+            {"role": "agent", "text": random.choice(NAME_ASKS)},
+            {"role": "visitor", "text": name},
+            {"role": "agent", "text": f"Thanks {name}. BawdicSoft Team will be in touch within 2 hours."}]
+
+
+def convo_never_gives_email(page, proj, qa_list):
+    turns = [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+             {"role": "visitor", "text": f"I need {proj}"},
+             {"role": "agent", "text": "Got it. What's your timeline?"},
+             {"role": "visitor", "text": "Q3"}]
+    for q, a in qa_list:
+        turns.append({"role": "agent", "text": random.choice(EMAIL_ASKS)})
+        turns.append({"role": "visitor", "text": q})
+        turns.append({"role": "agent", "text": a})
+    return turns
+
+
+def convo_short_qa(page):
+    qa = random.choice(WEBSITE_QA)
+    q = random.choice(qa[0])
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": q}, {"role": "agent", "text": qa[1]}]
+
+
+def convo_thanks(page):
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": random.choice(THANKS)},
+            {"role": "agent", "text": random.choice([
+                "Anytime! Anything else I can help with?",
+                "Happy to help. Let me know if anything else comes up.",
+                "No problem at all — anything else on your mind?"])}]
+
+
+def convo_bye(page):
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": "bye"},
+            {"role": "agent", "text": random.choice([
+                "Take care! Feel free to reach out anytime.",
+                "Bye! Ping us whenever you're back.",
+                "See you — reach out whenever you need us."])}]
+
+
+def convo_roman_urdu(page):
+    return [{"role": "agent", "text": random.choice(PAGE_OPENERS[page])},
+            {"role": "visitor", "text": "mujhe ek chatbot chahiye"},
+            {"role": "agent", "text": "Bilkul — AI chatbot hamara core kaam hai. Kya yeh customer support ke liye hai ya lead capture ke liye?"},
+            {"role": "visitor", "text": "customer support"},
+            {"role": "agent", "text": "Got it. Platform kis pe bana hua hai?"}]
+
+
+def turns_to_examples(turns, user_type="unknown", user_info=None, page="/"):
+    examples = []
+    history = []
+    user_name = user_info.get("name", "") if user_info else ""
+    user_interests = user_info.get("interests", "") if user_info else ""
+    for turn in turns:
+        if turn["role"] == "agent":
+            recent = history[-6:] if len(history) > 6 else history
+            context = " | ".join(recent) if recent else "[conversation start]"
+            examples.append({
+                "user_type": user_type, "user_name": user_name,
+                "user_interests": user_interests, "page": page,
+                "context": context, "output": turn["text"]})
+        history.append(f"{turn['role']}: {turn['text']}")
+    return examples
+
+
+def main():
+    os.makedirs("data", exist_ok=True)
+    all_examples = []
+    pages = list(PAGE_OPENERS.keys())
+    PROJECT_NAMES = ["an AI chatbot", "a blockchain wallet", "a custom CRM",
+        "an NFT marketplace", "a SaaS dashboard", "an AI detection tool",
+        "a DeFi protocol", "an e-commerce platform", "a Web3 dApp",
+        "a recommendation engine", "an enterprise dashboard"]
+
+    for qa in WEBSITE_QA:
+        for question in qa[0]:
+            answer = qa[1]
+            for page in pages:
+                for _ in range(8):
+                    all_examples.extend(turns_to_examples(convo_unknown(page, question, answer), user_type="unknown", page=page))
+                for _ in range(5):
+                    all_examples.extend(turns_to_examples(convo_familiar(page, question, answer), user_type="familiar", page=page))
+                for _ in range(4):
+                    n = random.choice(NAMES); i = random.choice(INTERESTS)
+                    all_examples.extend(turns_to_examples(convo_known(page, n, i, question, answer), user_type="known", user_info={"name": n, "interests": i}, page=page))
+                for _ in range(3):
+                    n = random.choice(NAMES); i = random.choice(INTERESTS)
+                    all_examples.extend(turns_to_examples(convo_known_direct(page, n, i, question, answer), user_type="known", user_info={"name": n, "interests": i}, page=page))
+
+    for page in pages:
+        for _ in range(20):
+            all_examples.extend(turns_to_examples(convo_greeting_unknown(page), user_type="unknown", page=page))
+        for _ in range(15):
+            all_examples.extend(turns_to_examples(convo_greeting_familiar(page), user_type="familiar", page=page))
+        for _ in range(15):
+            n = random.choice(NAMES); i = random.choice(INTERESTS)
+            all_examples.extend(turns_to_examples(convo_greeting_known(n, i), user_type="known", user_info={"name": n, "interests": i}, page=page))
+
+    for qa in WEBSITE_QA:
+        q = random.choice(qa[0]); a = qa[1]
+        for page in pages:
+            for _ in range(4):
+                n = random.choice(NAMES)
+                all_examples.extend(turns_to_examples(convo_flow_with_email_ask(page, q, a, n), user_type="unknown", page=page))
+
+    for page in pages:
+        for _ in range(15):
+            all_examples.extend(turns_to_examples(convo_user_declines_email(page), user_type="unknown", page=page))
+
+    for page in pages:
+        for _ in range(30):
+            proj = random.choice(PROJECT_NAMES); qa = random.choice(WEBSITE_QA)
+            all_examples.extend(turns_to_examples(convo_email_ask_ignored_1(page, proj, random.choice(qa[0]), qa[1]), user_type="unknown", page=page))
+
+    for page in pages:
+        for _ in range(30):
+            proj = random.choice(PROJECT_NAMES)
+            qa1 = random.choice(WEBSITE_QA); qa2 = random.choice(WEBSITE_QA)
+            while qa2 is qa1: qa2 = random.choice(WEBSITE_QA)
+            all_examples.extend(turns_to_examples(convo_email_ask_ignored_2(page, proj, random.choice(qa1[0]), qa1[1], random.choice(qa2[0]), qa2[1]), user_type="unknown", page=page))
+
+    for page in pages:
+        for _ in range(20):
+            proj = random.choice(PROJECT_NAMES)
+            qs = random.sample(WEBSITE_QA, 3)
+            qa_list = [(random.choice(qa[0]), qa[1]) for qa in qs]
+            all_examples.extend(turns_to_examples(convo_email_ask_ignored_3(page, proj, qa_list), user_type="unknown", page=page))
+
+    for page in pages:
+        for _ in range(25):
+            proj = random.choice(PROJECT_NAMES); qa = random.choice(WEBSITE_QA)
+            all_examples.extend(turns_to_examples(convo_email_ask_ignored_then_gives(page, proj, random.choice(qa[0]), qa[1]), user_type="unknown", page=page))
+
+    for page in pages:
+        for _ in range(20):
+            proj = random.choice(PROJECT_NAMES)
+            qa1 = random.choice(WEBSITE_QA); qa2 = random.choice(WEBSITE_QA)
+            while qa2 is qa1: qa2 = random.choice(WEBSITE_QA)
+            all_examples.extend(turns_to_examples(convo_email_ask_ignored_2_then_gives(page, proj, random.choice(qa1[0]), qa1[1], random.choice(qa2[0]), qa2[1]), user_type="unknown", page=page))
+
+    for page in pages:
+        for _ in range(20):
+            proj = random.choice(PROJECT_NAMES)
+            qs = random.sample(WEBSITE_QA, 3)
+            qa_list = [(random.choice(qa[0]), qa[1]) for qa in qs]
+            all_examples.extend(turns_to_examples(convo_never_gives_email(page, proj, qa_list), user_type="unknown", page=page))
+
+    for page in pages:
+        for _ in range(50):
+            all_examples.extend(turns_to_examples(convo_short_qa(page), user_type="unknown", page=page))
+        for _ in range(15):
+            all_examples.extend(turns_to_examples(convo_thanks(page), user_type="unknown", page=page))
+        for _ in range(10):
+            all_examples.extend(turns_to_examples(convo_bye(page), user_type="unknown", page=page))
+        for _ in range(8):
+            all_examples.extend(turns_to_examples(convo_roman_urdu(page), user_type="unknown", page=page))
+
+    seen = set(); unique = []
+    for ex in all_examples:
+        key = f"{ex['user_type']}|{ex['user_name']}|{ex['page']}|{ex['context']}|{ex['output']}"
+        if key not in seen:
+            seen.add(key); unique.append(ex)
+
+    random.shuffle(unique)
+    split = int(len(unique) * 0.9)
+    train, val = unique[:split], unique[split:]
+
+    with open("data/train.jsonl", "w") as f:
+        for ex in train: f.write(json.dumps(ex) + "\n")
+    with open("data/val.jsonl", "w") as f:
+        for ex in val: f.write(json.dumps(ex) + "\n")
+
+    counts = Counter(ex["user_type"] for ex in unique)
+    print(f"✅ Generated {len(unique)} unique examples")
+    for t in ("unknown", "familiar", "known"):
+        n = counts.get(t, 0)
+        print(f"   {t.capitalize():<10} {n:>6}  ({n/len(unique):.1%})")
+    print(f"   Train: {len(train)} | Val: {len(val)}")
+    print(f"\n   Total Q&A pairs: {len(WEBSITE_QA)}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+
+%%writefile train.py
+"""
+Fine-tunes google/flan-t5-base (250M) on BawdicSoft dataset.
+"""
+import json
+from datasets import Dataset
+from transformers import (
+    AutoTokenizer, AutoModelForSeq2SeqLM,
+    Seq2SeqTrainingArguments, Seq2SeqTrainer,
+    DataCollatorForSeq2Seq,
+)
+
+MODEL_NAME = "google/flan-t5-base"
+MAX_INPUT_LEN = 512
+MAX_TARGET_LEN = 128
+
+
+def load_jsonl(path):
+    rows = []
+    with open(path) as f:
+        for line in f:
+            rows.append(json.loads(line))
+    return Dataset.from_list(rows)
+
+
+def join_columns(example):
+    return {
+        "input": (
+            f"user_type: {example['user_type']} | "
+            f"user_name: {example['user_name'] or 'none'} | "
+            f"user_interests: {example['user_interests'] or 'none'} | "
+            f"page: {example['page']} | "
+            f"context: {example['context']}"
+        ),
+        "output": example["output"],
+    }
+
+
+def main():
+    print(f"Loading {MODEL_NAME}...")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
+
+    print("Loading dataset...")
+    train_raw = load_jsonl("data/train.jsonl")
+    val_raw = load_jsonl("data/val.jsonl")
+    print(f"Train: {len(train_raw)} | Val: {len(val_raw)}")
+
+    train_ds = train_raw.map(join_columns, remove_columns=train_raw.column_names)
+    val_ds = val_raw.map(join_columns, remove_columns=val_raw.column_names)
+
+    print(f"\nSample input:\n{train_ds[0]['input'][:250]}")
+    print(f"\nSample output:\n{train_ds[0]['output']}\n")
+
+    def preprocess(batch):
+        model_inputs = tokenizer(
+            batch["input"], max_length=MAX_INPUT_LEN,
+            truncation=True, padding="max_length",
+        )
+        labels = tokenizer(
+            text_target=batch["output"], max_length=MAX_TARGET_LEN,
+            truncation=True, padding="max_length",
+        )
+        labels["input_ids"] = [
+            [(tok if tok != tokenizer.pad_token_id else -100) for tok in seq]
+            for seq in labels["input_ids"]
+        ]
+        model_inputs["labels"] = labels["input_ids"]
+        return model_inputs
+
+    print("Tokenizing...")
+    train_tok = train_ds.map(preprocess, batched=True, remove_columns=train_ds.column_names)
+    val_tok = val_ds.map(preprocess, batched=True, remove_columns=val_ds.column_names)
+
+    collator = DataCollatorForSeq2Seq(tokenizer, model=model)
+
+    args = Seq2SeqTrainingArguments(
+        output_dir="/kaggle/working/checkpoints",
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        learning_rate=2e-4,
+        per_device_train_batch_size=8,
+        per_device_eval_batch_size=8,
+        num_train_epochs=3,
+        weight_decay=0.01,
+        save_total_limit=2,
+        predict_with_generate=True,
+        logging_steps=100,
+        load_best_model_at_end=True,
+        report_to="none",
+        fp16=True,
+        warmup_steps=500,
+    )
+
+    trainer = Seq2SeqTrainer(
+        model=model, args=args,
+        train_dataset=train_tok, eval_dataset=val_tok,
+        data_collator=collator,
+        processing_class=tokenizer,
+    )
+
+    print("\n" + "=" * 60)
+    print("STARTING TRAINING (30-40 min on T4)...")
+    print("=" * 60 + "\n")
+
+    trainer.train()
+
+    print("\nSaving model...")
+    model.save_pretrained("/kaggle/working/model_out")
+    tokenizer.save_pretrained("/kaggle/working/model_out")
+    print("✅ Saved to /kaggle/working/model_out")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+!mkdir -p data
+!python generate_dataset.py
+!wc -l data/train.jsonl data/val.jsonl
+
+
+
+
+
+
+
+
+import json
+from collections import Counter
+
+print("=" * 60)
+print("DATASET VERIFICATION")
+print("=" * 60)
+
+with open("data/train.jsonl") as f:
+    train_count = sum(1 for _ in f)
+with open("data/val.jsonl") as f:
+    val_count = sum(1 for _ in f)
+print(f"\nTrain: {train_count} | Val: {val_count}")
+
+ex = json.loads(open("data/train.jsonl").readline())
+expected = {"user_type", "user_name", "user_interests", "page", "context", "output"}
+actual = set(ex.keys())
+print(f"Columns match: {expected == actual}")
+
+print("\n" + "=" * 60)
+print("SAMPLES: 'what is bawdicsoft'")
+print("=" * 60)
+for ut in ["unknown", "familiar", "known"]:
+    print(f"\n--- {ut} ---")
+    with open("data/train.jsonl") as f:
+        for line in f:
+            e = json.loads(line)
+            if e["user_type"] == ut and "what is bawdicsoft" in e["context"].lower():
+                print(f"  context: {e['context'][:180]}...")
+                print(f"  output:  {e['output'][:200]}")
+                break
+
+
+
+
+
+
+
+
+
+!python train.py
+
+
+
+
+import torch
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+MODEL_DIR = "/kaggle/working/model_out"
+print("Loading trained model...")
+tok = AutoTokenizer.from_pretrained(MODEL_DIR)
+mdl = AutoModelForSeq2SeqLM.from_pretrained(MODEL_DIR).eval()
+print("Loaded ✅\n")
+
+
+def predict(user_type, user_name, user_interests, page, context):
+    inp = (
+        f"user_type: {user_type} | "
+        f"user_name: {user_name or 'none'} | "
+        f"user_interests: {user_interests or 'none'} | "
+        f"page: {page} | "
+        f"context: {context}"
+    )
+    ids = tok(inp, return_tensors="pt", truncation=True, max_length=512)
+    with torch.no_grad():
+        out = mdl.generate(**ids, max_new_tokens=150, num_beams=1,
+                          no_repeat_ngram_size=2, do_sample=False)
+    return tok.decode(out[0], skip_special_tokens=True).strip()
+
+
+tests = [
+    ("T1: hi unknown", "unknown", "", "", "/", "visitor: hi"),
+    ("T2: hi familiar", "familiar", "", "", "/", "visitor: hi"),
+    ("T3: hi known", "known", "Ali", "AI chatbot", "/services", "visitor: hi"),
+    ("T4: what is bawdicsoft", "unknown", "", "", "/",
+     "agent: Hey! | visitor: what is bawdicsoft"),
+    ("T5: services", "unknown", "", "", "/services",
+     "visitor: what services do you offer"),
+    ("T6: portfolio", "unknown", "", "", "/portfolio",
+     "visitor: what have you built"),
+    ("T7: pricing", "unknown", "", "", "/services",
+     "visitor: how much does it cost"),
+    ("T8: deep-trace", "unknown", "", "", "/deep-trace",
+     "visitor: what is deep-trace"),
+    ("T9: gdpr", "unknown", "", "", "/services",
+     "visitor: are you gdpr compliant"),
+    ("T10: hire", "unknown", "", "", "/",
+     "visitor: I want to hire a team for AI chatbot"),
+    ("T11: nope", "unknown", "", "", "/",
+     "agent: Want a tailored proposal? Just drop your email. | visitor: nope"),
+    ("T12: Roman Urdu", "unknown", "", "", "/",
+     "visitor: mujhe chatbot chahiye"),
+    ("T13: off-topic", "unknown", "", "", "/",
+     "visitor: what's the weather"),
+    ("T14: ignore email + question", "unknown", "", "", "/",
+     "agent: Want a proposal? Drop your email. | visitor: what's your timeline"),
+    ("T15: known user question", "known", "Sara", "blockchain wallet", "/about-us",
+     "agent: Welcome back Sara! Still working on blockchain wallet? | "
+     "visitor: Yes, got a question. | agent: Sure — what's your question? | "
+     "visitor: what is bawdicsoft"),
+]
+
+for label, ut, un, ui, pg, ctx in tests:
+    print("=" * 72)
+    print(label)
+    print("=" * 72)
+    print(f"→ {predict(ut, un, ui, pg, ctx)}\n")
+
+
+
+
+
+import os
+os.chdir("/kaggle/working")
+
+!zip -r -q model_out.zip model_out
+!ls -lh model_out.zip
+
+from IPython.display import FileLink, display
+display(FileLink('model_out.zip'))
+
+
+
+
+
+
+
